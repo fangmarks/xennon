@@ -1,0 +1,20 @@
+{
+  "name": "xennon",
+  "version": "0.0.1-alpha",
+  "description": "Xennon is a simple, persistent JSON data storage model, with simple filtering and data protection.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "events": "^3.2.0",
+    "timequeue": "^2.0.2",
+    "uid": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.22"
+  }
+}
