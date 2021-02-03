@@ -1,28 +1,33 @@
-import TimeQueue from 'timequeue'
-import EventEmiiter from 'events'
+import * as  TimeQueue from 'timequeue'
+import * as  EventEmitter from 'events'
 import { uid } from 'uid'
 import XennonTypes from "./types";
-import fs from 'fs'
+import * as fs from 'fs'
+import * as ms from 'ms'
 
 const DefaultStoreOptions: XennonTypes.DefaultStoreOptions = {
     name: 'store',
     path: process.cwd() + '/XennonStore',
     backups: {
         enabled: true,
-        interval: '1 hour'
+        interval: '30 minutes'
     }
 }
 const DefaultFilterOptions: XennonTypes.DefaultFilterOptions = {
     strict: false
 }
-export default class XennonStore extends EventEmiiter.EventEmitter {
+// export default class XennonStore {
+export default class XennonStore extends EventEmitter.EventEmitter {
     private backups
     private options
     worker: (action: any, callback?: any) => void;
+    queue: TimeQueue;
+    backupInterval: any;
 
     constructor(options: XennonTypes.DefaultStoreOptions = DefaultStoreOptions) {
         super()
         this.options = options
+        this.backupInterval = null
         if (!this.options.name) this.options.name = DefaultStoreOptions.name
         if (!this.options.path) this.options.path = DefaultStoreOptions.path
         if (!this.options.backups.enabled) this.options.backups.enabled = DefaultStoreOptions.backups.enabled
@@ -31,8 +36,510 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
         this._ensureCreated('folder', this.options.path)
         this._ensureCreated('file', `${this.options.path}/${this.options.name}.json`)
 
-        this.worker = (action, callback = null) => { }
+        this.worker = (action, callback = null) => {
+            const data = action()
+            if (callback) callback(data || null)
+        }
+
+        this.queue = new TimeQueue(this.worker, {
+            concurrency: 1,
+            every: 0
+        })
+
+        if (this.options.backups.enabled) this.startBackups()
     }
+    /**
+     * Adds a new object to the store
+     * @param {Object | Array<Object>} vals An object or an array of objects to add to the store
+     * @returns {String | Array<String>} The ID of the item added, or an array of IDs belonging to the items added
+     * @fires Store#added
+     * 
+     * @example <caption>Add a single item</caption>
+     * Store.add({ my: 'item' })
+     * @example <caption>Add multiple items</caption>
+     * Store.add([
+     *  { item: '1' },
+     *  { item: '2' }
+     * ])
+     */
+    add(vals) {
+        return new Promise(async (resolve, reject) => {
+            const newData = await this.object();
+
+            if (Array.isArray(vals)) {
+                let ids = [];
+                let data = [];
+
+                vals.forEach(async (val, index) => {
+                    if (!val || val.constructor !== Object)
+                        return reject(new TypeError(`Value [${index}]: must be an object`));
+
+                    if (Object.keys(val).length == 0)
+                        return reject(new TypeError(`Value [${index}]: must not be an empty object`));
+
+                    const id = uid(16);
+                    val._id = id;
+                    newData[id] = val;
+
+                    ids.push(id);
+                    data.push(val);
+                });
+
+                this.queue.push(() => {
+                    fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, JSON.stringify(newData));
+                }, () => {
+                    /**
+                     * Fires when a new item is added to the store
+                     * 
+                     * @event Store#added
+                     * @property {Object | Array<Object>} value The item added, or an array of the items added
+                     */
+                    this.emit('added', data);
+
+                    resolve(ids);
+                });
+            } else {
+                const val = vals;
+
+                if (!val || val.constructor !== Object)
+                    return reject(new TypeError('Value must be an object'));
+
+                if (Object.keys(val).length == 0)
+                    return reject(new TypeError('Value must not be an empty object'));
+
+                const id = uid(16);
+                val._id = id;
+                newData[id] = val;
+
+                this.queue.push(() => {
+                    fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, JSON.stringify(newData));
+                }, () => {
+                    /**
+                     * Fires when a new item is added to the store
+                     * 
+                     * @event Store#added
+                     * @property {Object | Array<Object>} value The item added, or an array of the items added
+                     */
+                    this.emit('added', val);
+
+                    resolve(id);
+                });
+            }
+        });
+    }
+
+    /**
+     * Get an item from the store
+     * @param {String} id The ID of the item to get from the store
+     * @returns {Object | undefined} The item that belongs to that ID, or undefined if none is found
+     * 
+     * @example <caption>Get an item using it's ID</caption>
+     * Store.get('2xuxhuoyd5h5563v')
+     */
+    get(id) {
+        return new Promise(async (resolve, reject) => {
+            const data = await this.object();
+            const item = data[id];
+
+            if (!item) return resolve(undefined);
+            else return resolve(item);
+        });
+    }
+
+    /**
+     * Indicates if a specific item how many items exist that match a provided filter
+     * @param {Object | String} filter Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @returns {Boolean | Number} Either a boolean indicating if an item is found, or a number indicating how many items matching the filter were found
+     * 
+     * @example <caption>Check if an item exists using a filter object</caption>
+     * Store.has({ myProp: 'myVal' })
+     * 
+     * @example <caption>Check if an item exists using an item's ID</caption>
+     * Store.has('2xuxhuoyd5h5563v')
+     */
+    has(filter) {
+        return new Promise(async (resolve, reject) => {
+            // TODO: has
+        });
+    }
+
+    /**
+     * Ensures an item in the store exists, adding it if it doesn't
+     * @param {Object | Function | String} filter Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @param {Object} item The item to add to the store, if it doesn't exist
+     * @return {Boolean | Number} A boolean indicating whether the item exists or was added
+     * @fires Store#added
+     * 
+     * @example <caption>Ensure an item exists using a filter object</caption>
+     * Store.ensure({ myProp: 'myVal' }, { myProp: 'myVal' })
+     * 
+     * @example <caption>Ensure an item exists using an item's ID</caption>
+     * Store.ensure('2xuxhuoyd5h5563v', { myProp: 'myVal' })
+     */
+    ensure(filter, item) {
+        return new Promise(async (resolve, reject) => {
+            // TODO: ensure
+        });
+    }
+
+    /**
+     * Get all items from the store
+     * @returns {Array<Object>} An array of items in the store
+     * 
+     * @example <caption>Get all items from the store as an array of objects</caption>
+     * Store.all()
+     */
+    all() {
+        return new Promise(async (resolve, reject) => {
+            this.queue.push(() => {
+                const data = fs.readFileSync(`${this.options.path}/${this.options.name}.json`, 'utf8');
+                return JSON.parse(data.toString());
+            }, (data) => {
+                resolve(Object.values(data));
+            });
+        });
+    }
+
+    /**
+     * Get all items from the store, in raw object (key- > value) form
+     * @returns {Object} An object of items in the store
+     *
+     * @example <caption>Get all items from the store as a ID mapped object</caption>
+     * Store.object()
+     */
+    object() {
+        return new Promise(async (resolve, reject) => {
+            this.queue.push(() => {
+                const data = fs.readFileSync(`${this.options.path}/${this.options.name}.json`, 'utf8');
+                return JSON.parse(data.toString());
+            }, (data) => {
+                resolve(data);
+            });
+        });
+    }
+
+    /**
+     * Get all items from the store that match an object (key -> value) filter
+     * @param {Object} obj An object containing the keys/values to filter by
+     * @param {FilterOptions} [opts] The options for the filter
+     * @returns {Array<Object>} An array of items in the store that matched the filter
+     * 
+     * @example <caption>Get all items from the store that match a filter object</caption>
+     * Store.only({ myProp: 'myVal' })
+     */
+    only(obj, opts = DefaultFilterOptions) {
+        return new Promise(async (resolve, reject) => {
+            if (!opts.strict) opts.strict = false;
+
+            const data = await this.all();
+            // @ts-ignore
+            const items = data.filter((x) => {
+                let val;
+
+                for (const o in obj) {
+                    if (!x[o]) return val = false;
+
+                    if (typeof (x[o]) === 'string' && opts.strict === false) {
+                        if (x[o].toLowerCase() === obj[o].toLowerCase()) return val = true;
+                        else return val = false;
+                    } else {
+                        if (x[o] === obj[o]) return val = true;
+                        else return val = false;
+                    }
+                }
+
+                return val;
+            });
+
+            if (!items.length) return resolve([]);
+            else return resolve(items);
+        });
+    }
+
+    /**
+     * Get all items from the store that match a function filter
+     * @param {Function} func A function that returns a truthy value for items that match the filter
+     * @returns {Array<Object>} An array of items in the store that matched the filter
+     * 
+     * @example <caption>Get all items from the store that match a filter function</caption>
+     * Store.filter((item) => item.myProp === 'myVal')
+     */
+    filter(func) {
+        return new Promise(async (resolve, reject) => {
+            const data = await this.all();
+            // @ts-ignore
+            const items = data.filter(func);
+
+            if (!items.length) return resolve([]);
+            else return resolve(items);
+        });
+    }
+
+    /**
+     * Filters all items from the store that match a function filter, but only returns the first match
+     * @param {Function} func A function that returns a truthy value for the item that matches the filter
+     * @returns {Object | undefined} The item itself, or undefined if the item doesn't exist
+     * 
+     * @example <caption>Get the first item from the store that matchs a filter function</caption>
+     * Store.first((item) => item.myProp === 'myVal')
+     */
+    first(func) {
+        return new Promise(async (resolve, reject) => {
+            const data = await this.all();
+            // @ts-ignore
+            const item = data.find(func);
+
+            if (!item) return resolve(undefined);
+            else return resolve(item);
+        });
+    }
+
+    /**
+     * Edit an item in the store
+     * @param {Function | Object | String} key Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @param {Object} newValues An object of keys/values to add, edit or remove to/from the item
+     * @returns {Boolean | undefined} A boolean indicating the result of the action, or undefined if the item doesn't exist
+     * @fires Store#edited
+     * 
+     * @example <caption>Edit an item using a filter object</caption>
+     * Store.edit({ myProp: 'myVal' }, { myProp: 'myNewVal', myNewVal: 'anotherNewVal' })
+     * 
+     * @example <caption>Edit an item using an item's ID</caption>
+     * Store.edit('2xuxhuoyd5h5563v', { myProp: 'myNewVal', myNewVal: 'anotherNewVal' })
+     */
+    edit(key, newValues) {
+        return new Promise(async (resolve, reject) => {
+            const id = await this._get(key);
+            if (!id) return resolve(undefined);
+
+            const data = await this.object();
+            // @ts-ignore
+            const item = data[id];
+
+            if (!item) return resolve(undefined);
+            else {
+                let newItem = item;
+                const oldItem = item;
+
+                for (const v of Object.keys(newValues)) {
+                    if (!newItem[v]) newItem[v] = newValues[v];
+                    else if (newValues[v] === undefined) delete newItem[v];
+                    else newItem[v] = newValues[v];
+                }
+
+                // @ts-ignore
+                data[id] = newItem;
+
+                this.queue.push(() => {
+                    fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, JSON.stringify(data));
+                }, () => {
+                    /**
+                     * Fired when an item in the store is edited
+                     * 
+                     * @event Store#edited
+                     * @type {Object}
+                     * @property {Object} old The value of the item before the edit
+                     * @property {Object} new The value of the item after the edit
+                     */
+                    this.emit('edited', {
+                        old: oldItem,
+                        new: newItem
+                    });
+
+                    resolve(true);
+                });
+            }
+        });
+    }
+    /**
+     * A combination function that edits an existing item, or adds a new item if it doesn't exist in the store
+     * @param {Function | Object | String} key Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @param {Object} newValues An object of keys/values to add, edit or remove to/from the item. If the item doesn't exist and is added, only keys with a truthy value are added.
+     * @returns {Boolean | undefined} A boolean indicating the result of the action
+     * @fires Store#added
+     * @fires Store#edited
+     * 
+     * @example <caption>Upsert an item using a filter object</caption>
+     * Store.upsert({ myProp: 'myVal' }, { myProp: 'myVal', myNewVal: 'anotherNewVal' })
+     * 
+     * @example <caption>Edit an item using an item's ID</caption>
+     * Store.upsert('2xuxhuoyd5h5563v', { myProp: 'myVal', myNewVal: 'anotherNewVal' })
+     */
+    upsert(key, newValues) {
+        return new Promise(async (resolve, reject) => {
+            // TODO: upsert
+        });
+    }
+
+    /**
+     * Replace an item in the store entirely
+     * @param {Function | Object | String} key Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @param {Object} value The new object to replace the existing item in the store with
+     * @returns {Boolean | undefined} A boolean indicating the result of the action, or undefined if the item doesn't exist
+     * @fires Store#replaced
+     * 
+     * @example <caption>Replace an item using a filter object</caption>
+     * Store.replace({ myProp: 'myVal' }, { myNewestProp: 'myNewestVal' })
+     * 
+     * @example <caption>Edit an item using an item's ID</caption>
+     * Store.replace('2xuxhuoyd5h5563v', { myNewestProp: 'myNewestVal' })
+     */
+    replace(key, value) {
+        return new Promise(async (resolve, reject) => {
+            const id = await this._get(key);
+            if (!id) return resolve(undefined);
+
+            const data = await this.object();
+            // @ts-ignore
+            const item = data[id];
+
+            if (!item) return resolve(undefined);
+            else {
+                const oldItem = item;
+
+                value._id = item._id;
+
+                // @ts-ignore
+                data[id] = value;
+
+                this.queue.push(() => {
+                    fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, JSON.stringify(data));
+                }, () => {
+                    /**
+                     * Fired when an item in the store is replaced with a new item
+                     * 
+                     * @event Store#replaced
+                     * @type {Object}
+                     * @property {Object} old The value of the item before the replace
+                     * @property {Object} new The value of the item after the replace
+                     */
+                    this.emit('replaced', {
+                        old: oldItem,
+                        new: value
+                    });
+
+                    resolve(true);
+                });
+            }
+        });
+    }
+
+    /**
+     * Iterates ofer all items in the store and deletes items that match a filter provided
+     * @param {Function | Object} filter Either an object containing the keys/values to filter by, or a filter function that returns a truthy value
+     * @returns {Number} A number indicating how many items were deleted from the store
+     * 
+     * @example <caption>Sweep the store using a filter object</caption>
+     * Store.sweep({ myProp: 'myVal' })
+     */
+    sweep(filter) {
+        return new Promise(async (resolve, reject) => {
+            let items;
+
+            // Object
+            if (this._isObject(filter)) {
+                items = await this.only(filter);
+                if (!items || !items.length) return resolve(undefined);
+            }
+
+            // Function
+            if (typeof (filter) === 'function') {
+                items = await this.filter(filter);
+                if (!items || !items.length) return resolve(undefined);
+            }
+
+            const actions = items.map((x) => this.delete(x._id));
+
+            try {
+                const results = await Promise.all(actions);
+
+                return resolve(results.filter((x) => x === true).length);
+            } catch (err) {
+                return reject(err);
+            }
+        });
+    }
+
+    /**
+     * Delete an item from the store
+     * @param {Function | Object | String} key Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+     * @returns {Boolean | undefined} A boolean indicating the result of the action, or undefined if the item doesn't exist
+     * @fires Store#deleted
+     * 
+     * @example <caption>Delete an item using a filter object</caption>
+     * Store.delete({ myProp: 'myVal' })
+     * 
+     * @example <caption>Delete an item using an item's ID</caption>
+     * Store.delete('2xuxhuoyd5h5563v')
+     */
+    delete(key) {
+        return new Promise(async (resolve, reject) => {
+            const id = await this._get(key);
+            if (!id) return resolve(undefined);
+
+            const data = await this.object();
+            // @ts-ignore
+            const item = data[id];
+
+            if (!item) return resolve(undefined);
+            else {
+                const oldItem = item;
+
+                // @ts-ignore
+                delete data[id];
+
+                this.queue.push(() => {
+                    fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, JSON.stringify(data));
+                }, () => {
+                    /**
+                     * Fires when an item from the store is deleted
+                     * 
+                     * @event Store#deleted
+                     * @property {Object} oldItem The item deleted from the store
+                     */
+                    this.emit('deleted', oldItem);
+
+                    resolve(true);
+                });
+            }
+        });
+    }
+
+    /**
+     * Deletes all items from the store
+     * @returns {Boolean} A boolean indicating the result of the action
+     * @fires Store#emptied
+     * 
+     * @example <caption>Empty the store</caption>
+     * Store.empty()
+     */
+    empty() {
+        return new Promise(async (resolve, reject) => {
+            this.queue.push(() => {
+                fs.writeFileSync(`${this.options.path}/${this.options.name}.json`, '{}');
+            }, () => {
+                /**
+                 * Fires when the store is emptied
+                 * 
+                 * @event Store#emptied
+                 */
+                this.emit('emptied');
+
+                resolve(true);
+            });
+        });
+    }
+
+    /**
+     * Ensure a directory or file has been created and exists
+     * @private
+     * @param {'file' | 'folder'} type The type to ensure exists
+     * @param {String} dir The full path or full path and filename to ensure exists
+     * @returns {Boolean} A boolean indicating the result of the action
+     * 
+     * @example <caption>Ensure the data directory exists</caption>
+     * Store._ensureCreated('folder', this.options.path)
+     */
     _ensureCreated(type, dir) {
         const exists = fs.existsSync(dir);
 
@@ -78,6 +585,7 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
             // Object
             if (this._isObject(filter)) {
                 const item = await this.only(filter);
+                // @ts-ignore
                 if (!item || !item.length) return resolve(undefined);
 
                 return resolve(item[0]._id);
@@ -85,6 +593,7 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
 
             // Function
             if (typeof (filter) === 'function') {
+                // @ts-ignore
                 const item = await this.find(filter);
                 if (!item) return resolve(undefined);
 
@@ -94,7 +603,7 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
             // ID
             const item = await this.get(filter);
             if (!item) return resolve(undefined);
-
+            // @ts-ignore
             return resolve(item._id);
         });
     }
@@ -111,7 +620,7 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
         return new Promise(async (resolve, reject) => {
             if (this.backupInterval !== null) return reject(`Backups already running`);
 
-            this.backupInterval = setInterval(() => { this.backup(); }, this.options.backupInterval);
+            this.backupInterval = setInterval(() => { this.backup(); }, ms(this.options.backups.interval));
 
             /**
              * Fires when scheduled backups are started
@@ -219,5 +728,4 @@ export default class XennonStore extends EventEmiiter.EventEmitter {
             });
         });
     }
-}
 }

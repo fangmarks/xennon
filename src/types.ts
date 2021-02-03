@@ -35,6 +35,7 @@ declare namespace XennonStore {
     interface DefaultFilterOptions {
         strict: boolean
     }
+
 }
 
 
