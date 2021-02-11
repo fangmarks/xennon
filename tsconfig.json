@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationDir": "./typings",
+    "rootDir": "src/",
+    "outDir": "build/",
+    "typeRoots": ["node_modules/@types"],
+    
+  },
+  "exclude": ["test.ts"]
+}
