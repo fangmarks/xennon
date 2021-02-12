@@ -2,7 +2,7 @@
   "name": "xennon",
   "version": "0.1.0",
   "description": "Xennon is a simple, persistent JSON data storage model, with simple filtering and data protection.",
-  "main": "index.js",
+  "main": "build/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
