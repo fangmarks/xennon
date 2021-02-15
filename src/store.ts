@@ -15,8 +15,10 @@ const DefaultStoreOptions = {
 const DefaultFilterOptions = {
     strict: false,
 };
-// export default class XennonStore {
-export default class XennonStore extends EventEmitter.EventEmitter {
+
+
+
+class XennonStore extends EventEmitter.EventEmitter {
     private backups;
     private op;
     options;
