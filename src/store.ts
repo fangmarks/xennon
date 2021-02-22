@@ -18,7 +18,7 @@ const DefaultFilterOptions = {
 
 
 
-class XennonStore extends EventEmitter.EventEmitter {
+export default class XennonStore extends EventEmitter.EventEmitter {
     private backups;
     private op;
     options;
@@ -103,6 +103,8 @@ class XennonStore extends EventEmitter.EventEmitter {
                     }
                     newData[id] = val;
 
+                    val._id = id
+
                     ids.push(id);
                     data.push(val);
                 });
@@ -140,6 +142,8 @@ class XennonStore extends EventEmitter.EventEmitter {
                     id = uid(16);
                 }
                 newData[id] = val;
+
+                val._id = id
 
                 this.queue.push(() => {
                     fs.writeFileSync(
@@ -353,10 +357,10 @@ class XennonStore extends EventEmitter.EventEmitter {
     filter(func) {
         return new Promise(async (resolve, reject) => {
             const data = await this.all();
-            console.log("ALL DATA", data);
+            //            console.log("ALL DATA", data);
             // @ts-ignore
             const items = data.filter(func);
-            console.log("FILTERED DATA", items);
+            //            console.log("FILTERED DATA", items);
             if (!items.length) return resolve([]);
             else return resolve(items);
         });
@@ -383,13 +387,11 @@ class XennonStore extends EventEmitter.EventEmitter {
 
     /**
        * Edit an item in the store
-       * @param {Function | Object | String} key Either an object containing the keys/values to find by, a filter function that returns a truthy value, or the item's ID
+       * @param { String} key The Items ID, get the ID using somethig like `XennonStore.filter()`
        * @param {Object} newValues An object of keys/values to add, edit or remove to/from the item
        * @returns {Boolean | undefined} A boolean indicating the result of the action, or undefined if the item doesn't exist
        * @fires Store#edited
        * 
-       * @example <caption>Edit an item using a filter object</caption>
-       * Store.edit({ myProp: 'myVal' }, { myProp: 'myNewVal', myNewVal: 'anotherNewVal' })
        * 
        * @example <caption>Edit an item using an item's ID</caption>
        * Store.edit('2xuxhuoyd5h5563v', { myProp: 'myNewVal', myNewVal: 'anotherNewVal' })
